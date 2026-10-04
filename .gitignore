@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+# PlatformIO / VS Code
+.pio/
+.vscode/
+# Datos en bruto pesados
+data/raw/
+*.iq
+*.cfile
