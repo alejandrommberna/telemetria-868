@@ -1,0 +1,465 @@
+options:
+  parameters:
+    author: Alejandro Berna Mogica
+    category: '[GRC Hier Blocks]'
+    description: 'Tramas completas: generador, FSK, ruido, demodulador, sincronismo, RS y CRC'
+    generate_options: qt_gui
+    id: fsk_tramas
+    output_language: python
+    run: 'True'
+    run_options: prompt
+    title: 03 - Tramas de telemetria (ASM + RS + CRC)
+    window_size: (1200,900)
+  states:
+    coordinate:
+    - 8
+    - 8
+    rotation: 0
+    state: enabled
+blocks:
+- name: samp_rate
+  id: variable
+  parameters:
+    value: '96000'
+    comment: Muestras/s
+  states:
+    coordinate:
+    - 200
+    - 12
+    rotation: 0
+    state: enabled
+- name: baud
+  id: variable
+  parameters:
+    value: '9600'
+    comment: bit/s
+  states:
+    coordinate:
+    - 310
+    - 12
+    rotation: 0
+    state: enabled
+- name: sps
+  id: variable
+  parameters:
+    value: int(samp_rate/baud)
+    comment: Muestras por bit
+  states:
+    coordinate:
+    - 410
+    - 12
+    rotation: 0
+    state: enabled
+- name: desviacion
+  id: variable
+  parameters:
+    value: '4800'
+    comment: Desviacion FSK (Hz)
+  states:
+    coordinate:
+    - 510
+    - 12
+    rotation: 0
+    state: enabled
+- name: taps_lpf
+  id: variable
+  parameters:
+    value: firdes.low_pass(1, samp_rate, 12000, 4000, window.WIN_HAMMING, 6.76)
+    comment: Filtro paso bajo +-12 kHz
+  states:
+    coordinate:
+    - 640
+    - 12
+    rotation: 0
+    state: enabled
+- name: retardo
+  id: variable
+  parameters:
+    value: (len(taps_lpf)-1)//2
+    comment: Retardo del filtro (muestras)
+  states:
+    coordinate:
+    - 900
+    - 12
+    rotation: 0
+    state: enabled
+- name: asm_bits
+  id: variable
+  parameters:
+    value: '"00011010110011111111110000011101"'
+    comment: 1A CF FC 1D en binario
+  states:
+    coordinate:
+    - 1040
+    - 12
+    rotation: 0
+    state: enabled
+- name: ruido
+  id: variable_qtgui_range
+  parameters:
+    gui_hint: 0,0,1,2
+    label: Amplitud de ruido
+    min_len: '200'
+    orient: QtCore.Qt.Horizontal
+    rangeType: float
+    start: '0'
+    stop: '1.5'
+    step: '0.01'
+    value: '0.5'
+    widget: counter_slider
+  states:
+    coordinate:
+    - 200
+    - 100
+    rotation: 0
+    state: enabled
+- name: ebn0_db
+  id: variable_qtgui_label
+  parameters:
+    label: Eb/N0 (dB)
+    type: real
+    value: 10*math.log10(samp_rate/baud/max(ruido,1e-3)**2)
+    formatter: None
+    gui_hint: 1,0,1,1
+  states:
+    coordinate:
+    - 440
+    - 100
+    rotation: 0
+    state: enabled
+- name: imports
+  id: import
+  parameters:
+    imports: 'import math
+
+      from gnuradio.filter import firdes
+
+      from gnuradio.fft import window'
+  states:
+    coordinate:
+    - 1300
+    - 12
+    rotation: 0
+    state: enabled
+- name: generador
+  id: epy_block
+  parameters:
+    _source_code: "\"\"\"\nGenerador de tramas: emite, bit a bit (valores 0/1), tramas reales construidas\ncon ground/scripts/trama.py, cada una precedida de 4 bytes de preámbulo 0xAA.\nLos datos simulan un vuelo: el contador sube y la altitud y la presión cambian.\n\"\"\"\nimport math\nimport os\nimport sys\n\nimport numpy as np\nfrom gnuradio import gr\n\n\nclass blk(gr.sync_block):\n    def __init__(self, ruta_scripts='../scripts'):\n        gr.sync_block.__init__(self, name='Generador de tramas', in_sig=None, out_sig=[np.uint8])\n        self.ruta_scripts = ruta_scripts\n        self.trama = None\n        self.contador = 0\n        self.bits = np.zeros(0, dtype=np.uint8)\n\n    def start(self):\n        try:\n            base = os.path.dirname(os.path.abspath(__file__))\n        except NameError:\n            base = os.getcwd()\n        sys.path.insert(0, os.path.normpath(os.path.join(base, self.ruta_scripts)))\n        import trama\n        self.trama = trama\n        return True\n\n\
+      \    def nueva_trama(self):\n        n = self.contador\n        t = self.trama.Telemetria(\n            contador=n, tiempo_gps=453_215 + n, latitud=38.1795 + n * 1e-5,\n            longitud=-0.9725, altitud_m=12.5 + 5 * n % 3000, presion_pa=101_325 - 6 * n % 30000,\n            temperatura_c=23.41, humedad=55.2, acel_mg=(12, -8, 1002),\n            giro_dps=(0.5, -1.2, round(10 * math.sin(n / 10), 1)),\n            bateria_mv=5000, satelites=9, fix=3)\n        self.contador = (n + 1) & 0xFFFF\n        datos = bytes([0xAA] * 4) + self.trama.construir_trama(t)\n        return np.unpackbits(np.frombuffer(datos, dtype=np.uint8))\n\n    def work(self, input_items, output_items):\n        out = output_items[0]\n        while len(self.bits) < len(out):\n            self.bits = np.concatenate([self.bits, self.nueva_trama()])\n        out[:] = self.bits[:len(out)]\n        self.bits = self.bits[len(out):]\n        return len(out)\n"
+    ruta_scripts: '''../scripts'''
+    comment: Tramas reales de trama.py
+  states:
+    coordinate:
+    - 16
+    - 260
+    rotation: 0
+    state: enabled
+- name: a_float
+  id: blocks_char_to_float
+  parameters:
+    scale: '1'
+    vlen: '1'
+  states:
+    coordinate:
+    - 230
+    - 276
+    rotation: 0
+    state: enabled
+- name: por_dos
+  id: blocks_multiply_const_vxx
+  parameters:
+    const: '2'
+    type: float
+    vlen: '1'
+  states:
+    coordinate:
+    - 360
+    - 276
+    rotation: 0
+    state: enabled
+- name: menos_uno
+  id: blocks_add_const_vxx
+  parameters:
+    const: '-1'
+    type: float
+    vlen: '1'
+    comment: 0/1 -> -1/+1
+  states:
+    coordinate:
+    - 490
+    - 276
+    rotation: 0
+    state: enabled
+- name: repetir
+  id: blocks_repeat
+  parameters:
+    interp: sps
+    type: float
+    vlen: '1'
+  states:
+    coordinate:
+    - 620
+    - 276
+    rotation: 0
+    state: enabled
+- name: modulador_fsk
+  id: analog_frequency_modulator_fc
+  parameters:
+    sensitivity: 2*math.pi*desviacion/samp_rate
+  states:
+    coordinate:
+    - 760
+    - 276
+    rotation: 0
+    state: enabled
+- name: fuente_ruido
+  id: analog_noise_source_x
+  parameters:
+    amp: ruido
+    noise_type: analog.GR_GAUSSIAN
+    seed: '0'
+    type: complex
+    comment: 'Canal: ruido blanco gaussiano'
+  states:
+    coordinate:
+    - 760
+    - 380
+    rotation: 0
+    state: enabled
+- name: suma
+  id: blocks_add_xx
+  parameters:
+    num_inputs: '2'
+    type: complex
+    vlen: '1'
+  states:
+    coordinate:
+    - 980
+    - 300
+    rotation: 0
+    state: enabled
+- name: throttle
+  id: blocks_throttle2
+  parameters:
+    ignoretag: 'True'
+    limit: auto
+    maximum: '0.1'
+    samples_per_second: samp_rate
+    type: complex
+    vlen: '1'
+  states:
+    coordinate:
+    - 1100
+    - 300
+    rotation: 0
+    state: enabled
+- name: espectro
+  id: qtgui_freq_sink_x
+  parameters:
+    autoscale: 'False'
+    average: '0.2'
+    bw: samp_rate
+    fc: '0'
+    fftsize: '1024'
+    grid: 'True'
+    gui_hint: 3,0,1,2
+    name: '"Espectro"'
+    nconnections: '1'
+    showports: 'False'
+    type: complex
+    wintype: window.WIN_BLACKMAN_hARRIS
+    ymax: '10'
+    ymin: '-100'
+  states:
+    coordinate:
+    - 1300
+    - 320
+    rotation: 0
+    state: enabled
+- name: filtro_paso_bajo
+  id: fir_filter_xxx
+  parameters:
+    decim: '1'
+    samp_delay: '0'
+    taps: taps_lpf
+    type: ccf
+  states:
+    coordinate:
+    - 40
+    - 520
+    rotation: 0
+    state: enabled
+- name: demodulador_fsk
+  id: analog_quadrature_demod_cf
+  parameters:
+    gain: samp_rate/(2*math.pi*desviacion)
+  states:
+    coordinate:
+    - 250
+    - 536
+    rotation: 0
+    state: enabled
+- name: integrador
+  id: blocks_moving_average_xx
+  parameters:
+    length: sps
+    max_iter: '4000'
+    scale: 1.0/sps
+    type: float
+    vlen: '1'
+    comment: Filtro adaptado
+  states:
+    coordinate:
+    - 440
+    - 520
+    rotation: 0
+    state: enabled
+- name: muestreo
+  id: blocks_keep_m_in_n
+  parameters:
+    m: '1'
+    n: sps
+    offset: (retardo+sps-1)%sps
+    type: float
+    comment: 1 muestra por bit
+  states:
+    coordinate:
+    - 640
+    - 520
+    rotation: 0
+    state: enabled
+- name: decisor
+  id: digital_binary_slicer_fb
+  parameters: {}
+  states:
+    coordinate:
+    - 830
+    - 536
+    rotation: 0
+    state: enabled
+- name: buscar_asm
+  id: digital_correlate_access_code_tag_xx
+  parameters:
+    access_code: asm_bits
+    threshold: '2'
+    tagname: '"trama"'
+    type: byte
+    comment: Marca el inicio de cada trama (hasta 2 bits erroneos)
+  states:
+    coordinate:
+    - 990
+    - 520
+    rotation: 0
+    state: enabled
+- name: descodificador
+  id: epy_block
+  parameters:
+    _source_code: "\"\"\"\nDescodificador de tramas: recibe los bits demodulados (0/1) y las marcas que pone\n'Correlate Access Code' al encontrar 1A CF FC 1D. Recorta los 78 bytes siguientes,\ncorrige con Reed-Solomon, comprueba el CRC (trama.py) y muestra la telemetría.\nSalida: porcentaje de tramas perdidas en las últimas 100 (según huecos del contador).\n\"\"\"\nimport os\nimport sys\nfrom collections import deque\n\nimport numpy as np\nimport pmt\nfrom gnuradio import gr\n\nBITS_TRAMA = 78 * 8   # datos + CRC + Reed-Solomon (el ASM ya se ha detectado)\n\n\nclass blk(gr.sync_block):\n    def __init__(self, ruta_scripts='../scripts', mostrar_cada=10):\n        gr.sync_block.__init__(self, name='Descodificador de tramas', in_sig=[np.uint8], out_sig=[np.float32])\n        self.ruta_scripts = ruta_scripts\n        self.mostrar_cada = int(mostrar_cada)\n        self.trama = None\n        self.buffer = np.zeros(0, dtype=np.uint8)\n        self.inicio_buffer = 0          # posición absoluta\
+      \ del primer bit del buffer\n        self.pendientes = []            # posiciones absolutas donde empiezan tramas\n        self.fin_ultima = -1\n        self.ultimo_contador = None\n        self.historial = deque(maxlen=100)   # 1 = trama recibida, 0 = perdida\n        self.ok = self.corregidas = self.descartadas = 0\n        self.perdidas_pct = 0.0\n\n    def start(self):\n        try:\n            base = os.path.dirname(os.path.abspath(__file__))\n        except NameError:\n            base = os.getcwd()\n        sys.path.insert(0, os.path.normpath(os.path.join(base, self.ruta_scripts)))\n        import trama\n        self.trama = trama\n        return True\n\n    def procesar(self, bits):\n        datos = self.trama.ASM + np.packbits(bits).tobytes()\n        try:\n            t, n_corr = self.trama.descodificar_trama(datos)\n        except ValueError as e:\n            self.descartadas += 1\n            print(f\"[RX] trama descartada: {e}\")\n            return False\n        self.ok\
+      \ += 1\n        if n_corr:\n            self.corregidas += 1\n        if self.ultimo_contador is not None:\n            hueco = (t.contador - self.ultimo_contador - 1) & 0xFFFF\n            if hueco < 1000:\n                self.historial.extend([0] * hueco)\n        self.historial.append(1)\n        self.ultimo_contador = t.contador\n        self.perdidas_pct = 100.0 * (1 - sum(self.historial) / len(self.historial))\n        if n_corr or t.contador % self.mostrar_cada == 0:\n            print(f\"[RX] #{t.contador:5d}  lat {t.latitud:.5f}  lon {t.longitud:.5f}  alt {t.altitud_m:7.1f} m  \"\n                  f\"P {t.presion_pa} Pa  T {t.temperatura_c:.2f} C  | RS corrigió {n_corr:2d} B  \"\n                  f\"| OK {self.ok}  con correcciones {self.corregidas}  descartadas {self.descartadas}  \"\n                  f\"perdidas {self.perdidas_pct:.0f} %\")\n        return True\n\n    def work(self, input_items, output_items):\n        entrada = input_items[0]\n        n = len(entrada)\n\
+      \        pos0 = self.nitems_read(0)\n        for tag in self.get_tags_in_window(0, 0, n):\n            if pmt.symbol_to_string(tag.key) == 'trama' and tag.offset > self.fin_ultima:\n                self.pendientes.append(tag.offset)\n        self.buffer = np.concatenate([self.buffer, entrada])\n        while self.pendientes:\n            ini = self.pendientes[0]\n            fin = ini + BITS_TRAMA\n            if fin > self.inicio_buffer + len(self.buffer):\n                break\n            self.pendientes.pop(0)\n            if ini <= self.fin_ultima:\n                continue\n            a = ini - self.inicio_buffer\n            if a >= 0 and self.procesar(self.buffer[a:a + BITS_TRAMA]):\n                self.fin_ultima = fin - 1\n        conservar = 2 * BITS_TRAMA\n        if len(self.buffer) > conservar:\n            quitar = len(self.buffer) - conservar\n            self.buffer = self.buffer[quitar:]\n            self.inicio_buffer += quitar\n        output_items[0][:] = self.perdidas_pct\n\
+      \        return n\n"
+    ruta_scripts: '''../scripts'''
+    mostrar_cada: '10'
+    comment: RS + CRC + telemetria (ver consola)
+  states:
+    coordinate:
+    - 1240
+    - 520
+    rotation: 0
+    state: enabled
+- name: perdidas
+  id: qtgui_number_sink
+  parameters:
+    name: '"Tramas perdidas (ultimas 100)"'
+    type: float
+    autoscale: 'False'
+    avg: '0'
+    graph_type: qtgui.NUM_GRAPH_HORIZ
+    nconnections: '1'
+    min: '0'
+    max: '100'
+    update_time: '0.5'
+    gui_hint: 2,0,1,2
+    label1: Perdidas
+    unit1: '%'
+    color1: ("black", "black")
+    factor1: '1'
+  states:
+    coordinate:
+    - 1480
+    - 520
+    rotation: 0
+    state: enabled
+connections:
+- - generador
+  - '0'
+  - a_float
+  - '0'
+- - a_float
+  - '0'
+  - por_dos
+  - '0'
+- - por_dos
+  - '0'
+  - menos_uno
+  - '0'
+- - menos_uno
+  - '0'
+  - repetir
+  - '0'
+- - repetir
+  - '0'
+  - modulador_fsk
+  - '0'
+- - modulador_fsk
+  - '0'
+  - suma
+  - '0'
+- - fuente_ruido
+  - '0'
+  - suma
+  - '1'
+- - suma
+  - '0'
+  - throttle
+  - '0'
+- - throttle
+  - '0'
+  - espectro
+  - '0'
+- - throttle
+  - '0'
+  - filtro_paso_bajo
+  - '0'
+- - filtro_paso_bajo
+  - '0'
+  - demodulador_fsk
+  - '0'
+- - demodulador_fsk
+  - '0'
+  - integrador
+  - '0'
+- - integrador
+  - '0'
+  - muestreo
+  - '0'
+- - muestreo
+  - '0'
+  - decisor
+  - '0'
+- - decisor
+  - '0'
+  - buscar_asm
+  - '0'
+- - buscar_asm
+  - '0'
+  - descodificador
+  - '0'
+- - descodificador
+  - '0'
+  - perdidas
+  - '0'
+metadata:
+  file_format: 1
+  grc_version: 3.10.9.2
