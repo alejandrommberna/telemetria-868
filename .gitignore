@@ -9,3 +9,7 @@ __pycache__/
 data/raw/
 *.iq
 *.cfile
+# Código Python que GNU Radio genera al ejecutar los .grc (se regenera solo)
+ground/gnuradio/*.py
+# Memoria del proyecto (se mantiene solo en local)
+docs/Memoria_telemetria_868.docx
